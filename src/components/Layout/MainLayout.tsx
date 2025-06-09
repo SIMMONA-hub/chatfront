@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import OpenAI from 'openai';
-
+import { useChatMessages, useAddMessage, useClearChatHistory } from '../../hooks/useChat';
 interface Message {
   id: string;
   text: string;
@@ -17,50 +17,10 @@ export default function MainLayout({
   selectedChatId,
   onChatSelect,
 }: MainLayoutProps) {
-
-  
-
-  // Функция для загрузки сообщений из localStorage
-  const loadMessages = (): Record<string, Message[]> => {
-    try {
-      const savedMessages = localStorage.getItem('chatMessages');
-      if (savedMessages) {
-        const parsed = JSON.parse(savedMessages);
-        // Преобразуем строки timestamp обратно в Date объекты
-        Object.keys(parsed).forEach(chatId => {
-          parsed[chatId] = parsed[chatId].map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp)
-          }));
-        });
-        return parsed;
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки сообщений:', error);
-    }
-    
-    // Возвращаем начальные сообщения, если ничего не сохранено
-    return {
-      'ai-assistant': [
-        {
-          id: '1',
-          text: 'Привет! Я ваш AI помощник. Как дела?',
-          sender: 'ai',
-          timestamp: new Date(),
-        },
-      ],
-      'john-doe': [
-        {
-          id: '1',
-          text: 'Привет! Как дела?',
-          sender: 'contact',
-          timestamp: new Date(),
-        },
-      ],
-    };
-  };
-
-  const [messages, setMessages] = useState<Record<string, Message[]>>(loadMessages);
+  // Используем TanStack Query хуки
+  const { data: messages = {}, isLoading: messagesLoading } = useChatMessages();
+  const addMessageMutation = useAddMessage();
+  const clearHistoryMutation = useClearChatHistory();
 
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -69,7 +29,7 @@ export default function MainLayout({
   // Инициализация OpenAI
   const openai = new OpenAI({
     apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true, // Для работы в браузере
+    dangerouslyAllowBrowser: true,
   });
 
   const scrollToBottom = () => {
@@ -80,40 +40,13 @@ export default function MainLayout({
     scrollToBottom();
   }, [messages]);
 
-  // Сохранение сообщений в localStorage при их изменении
-  useEffect(() => {
-    try {
-      localStorage.setItem('chatMessages', JSON.stringify(messages));
-    } catch (error) {
-      console.error('Ошибка сохранения сообщений:', error);
-    }
-  }, [messages]);
-
   const clearChatHistory = () => {
     const confirmClear = window.confirm('Вы уверены, что хотите очистить всю историю чатов?');
     if (confirmClear) {
-      const initialMessages = {
-        'ai-assistant': [
-          {
-            id: '1',
-            text: 'Привет! Я ваш AI помощник. Как дела?',
-            sender: 'ai' as const,
-            timestamp: new Date(),
-          },
-        ],
-        'john-doe': [
-          {
-            id: '1',
-            text: 'Привет! Как дела?',
-            sender: 'contact' as const,
-            timestamp: new Date(),
-          },
-        ],
-      };
-      setMessages(initialMessages);
-      localStorage.removeItem('chatMessages');
+      clearHistoryMutation.mutate();
     }
   };
+
   const callAI = async (message: string): Promise<string> => {
     try {
       const completion = await openai.chat.completions.create({
@@ -141,7 +74,7 @@ export default function MainLayout({
   const sendMessage = async () => {
     if (!inputText.trim() || !selectedChatId) return;
 
-    const messageText = inputText; // Сохраняем текст до очистки
+    const messageText = inputText;
     
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -150,13 +83,9 @@ export default function MainLayout({
       timestamp: new Date(),
     };
 
-    // Добавляем сообщение пользователя
-    setMessages(prev => ({
-      ...prev,
-      [selectedChatId]: [...(prev[selectedChatId] || []), newMessage],
-    }));
-
-    setInputText(''); // Очищаем поле ввода
+    // Добавляем сообщение пользователя через мутацию
+    addMessageMutation.mutate({ chatId: selectedChatId, message: newMessage });
+    setInputText('');
 
     // Если это AI чат, получаем ответ
     if (selectedChatId === 'ai-assistant') {
@@ -170,10 +99,7 @@ export default function MainLayout({
           timestamp: new Date(),
         };
 
-        setMessages(prev => ({
-          ...prev,
-          [selectedChatId]: [...(prev[selectedChatId] || []), aiMessage],
-        }));
+        addMessageMutation.mutate({ chatId: selectedChatId, message: aiMessage });
       } catch (error) {
         console.error('Ошибка API:', error);
         const errorMessage: Message = {
@@ -183,15 +109,11 @@ export default function MainLayout({
           timestamp: new Date(),
         };
 
-        setMessages(prev => ({
-          ...prev,
-          [selectedChatId]: [...(prev[selectedChatId] || []), errorMessage],
-        }));
+        addMessageMutation.mutate({ chatId: selectedChatId, message: errorMessage });
       } finally {
         setIsLoading(false);
       }
     } else if (selectedChatId === 'john-doe') {
-      // John тоже может использовать AI, но с другим промптом
       setIsLoading(true);
       try {
         const johnPrompt = `Ты обычный человек по имени John Doe. Отвечай дружелюбно, коротко и по-человечески на сообщение: "${messageText}"`;
@@ -203,10 +125,7 @@ export default function MainLayout({
           timestamp: new Date(),
         };
 
-        setMessages(prev => ({
-          ...prev,
-          [selectedChatId]: [...(prev[selectedChatId] || []), johnMessage],
-        }));
+        addMessageMutation.mutate({ chatId: selectedChatId, message: johnMessage });
       } catch (error) {
         console.error('Ошибка получения ответа от John:', error);
         const errorMessage: Message = {
@@ -216,10 +135,7 @@ export default function MainLayout({
           timestamp: new Date(),
         };
 
-        setMessages(prev => ({
-          ...prev,
-          [selectedChatId]: [...(prev[selectedChatId] || []), errorMessage],
-        }));
+        addMessageMutation.mutate({ chatId: selectedChatId, message: errorMessage });
       } finally {
         setIsLoading(false);
       }
@@ -233,6 +149,15 @@ export default function MainLayout({
     }
   };
 
+  // Показываем загрузку, если сообщения еще загружаются
+  if (messagesLoading) {
+    return (
+      <div className="flex h-screen bg-gray-100 dark:bg-gray-900 items-center justify-center">
+        <div className="text-gray-500">Загрузка чатов...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
       {/* Sidebar */}
@@ -244,8 +169,9 @@ export default function MainLayout({
               onClick={clearChatHistory}
               className="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
               title="Очистить историю"
+              disabled={clearHistoryMutation.isPending}
             >
-              🗑️
+              {clearHistoryMutation.isPending ? '⏳' : '🗑️'}
             </button>
           </div>
           
@@ -363,14 +289,14 @@ export default function MainLayout({
                   onKeyPress={handleKeyPress}
                   placeholder="Введите сообщение..." 
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  disabled={isLoading}
+                  disabled={isLoading || addMessageMutation.isPending}
                 />
                 <button 
                   onClick={sendMessage}
-                  disabled={!inputText.trim() || isLoading}
+                  disabled={!inputText.trim() || isLoading || addMessageMutation.isPending}
                   className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
                 >
-                  {isLoading ? (
+                  {isLoading || addMessageMutation.isPending ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       <span>Отправка...</span>
@@ -398,7 +324,7 @@ export default function MainLayout({
               <p className="text-gray-600 dark:text-gray-400 mb-4">
                 Выберите чат из списка слева, чтобы начать общение
               </p>
-              <div className="text-sm text-gray-500 dark:text-gray-500">
+              <div className="text-xs text-gray-500 dark:text-gray-500">
                 🤖 AI Assistant - для общения с искусственным интеллектом<br/>
                 👤 John Doe - для обычного чата
               </div>
